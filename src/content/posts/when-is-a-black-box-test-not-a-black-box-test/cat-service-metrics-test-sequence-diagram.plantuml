@@ -1,0 +1,23 @@
+@startuml
+
+note over Test
+    Some set up logic to start the
+    Cat server and configure the mocks
+    to return ""500""s.
+end note
+
+Test -> Server++: ""GET /cat""
+    Server -> MockCatFactApi++: ""GET /fact""
+    return ""500""
+return ""500""
+
+Test -> Server++: ""GET /metrics""
+return Prometheus-Compatible\nMetrics Response
+
+note over Test
+    Assert the metrics response from
+    the Cat server shows the failed call
+    to ""/cat""
+end note
+
+@enduml

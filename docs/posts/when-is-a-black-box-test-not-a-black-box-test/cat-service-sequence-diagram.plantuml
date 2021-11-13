@@ -1,0 +1,11 @@
+@startuml
+actor Client
+
+Client -> Server++: ""GET /cat""
+    Server -> CatFactApi++: ""GET /fact""
+    return ""{ "fact": "Cats are lazy.", ...}""
+    Server -> CatImagesApi++: ""GET /v1/images/search""
+    return ""[{ "url": "http://catpics.com/8e1bf1f9...", ...}]""
+return ""{""\n""  "fact": "Cats are lazy.",""\n""  "image_url": "http://catpics.com/8e1bf1f9..."""\n""}""
+
+@enduml

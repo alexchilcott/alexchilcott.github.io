@@ -6,4 +6,11 @@
     <url>
         <loc>https://alexchilcott.github.io/posts/</loc>
     </url>
+    <url>
+        <loc>https://alexchilcott.github.io/posts/page/1/</loc>
+    </url>
+    <url>
+        <loc>https://alexchilcott.github.io/posts/when-is-a-black-box-test-not-a-black-box-test/</loc>
+        <lastmod>2021-11-13</lastmod>
+    </url>
 </urlset>

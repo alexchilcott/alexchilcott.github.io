@@ -1,0 +1,22 @@
+@startuml
+
+note over Test
+    Some set up logic to start
+    the Cat server and our mocks,
+    and to configure the behaviour
+    of our mocks
+end note
+
+Test -> Server++: ""GET /cat""
+    Server -> MockCatFactApi++: ""GET /fact""
+    return ""{ "fact": "some fact", ...}""
+    Server -> MockCatImagesApi++: ""GET /v1/images/search""
+    return ""[{ "url": "some url", ...}]""
+return ""{""\n""  "fact": "some fact",""\n""  "image_url": "some url"""\n""}""
+
+note over Test
+    Assert the response from
+    the Cat server is as expected
+end note
+
+@enduml
