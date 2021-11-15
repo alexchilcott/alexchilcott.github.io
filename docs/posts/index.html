@@ -92,7 +92,7 @@
         <article class="box">
           <h2 class="title">
             <a class="has-text-dark" href='https:&#x2F;&#x2F;alexchilcott.github.io&#x2F;posts&#x2F;when-is-a-black-box-test-not-a-black-box-test&#x2F;'>
-              When Is A &quot;Black Box&quot; Test, Not A &quot;Black Box&quot; Test?
+              When Is A &quot;Black Box&quot; Test Not A &quot;Black Box&quot; Test?
             </a>
           </h2>
           <p class="subtitle"></p>
@@ -117,20 +117,21 @@
   <span class="icon">
     <i class="far fa-clock"></i>
   </span>
-  <span>14 min,</span>
+  <span>13 min,</span>
   <span class="icon">
     <i class="fas fa-pencil-alt"></i>
   </span>
-  <span>2753 words</span>
+  <span>2559 words</span>
 </span>
 
             </div>
           </div>
           <div class="content mt-2">
-            <p>In a microservice architecture, <a href="https://martinfowler.com/articles/microservice-testing/#testing-component-introduction">component testing</a>, where the behaviour of a service is verified using only what is invokable and observable through its public interface, has become a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat the service as a &quot;black box&quot; that we can not see inside, and focus purely on the service's contract with the world around it.</p>
-<p>When these services are deployed to production, however, we require some degree of observability from them. The failure modes of complex distributed systems are rarely predictable, so it is crucial that, when our system's SLIs drop below the SLOs we have set for it, our services that comprise that system are exporting the telemetry data that engineers need to be able to detect and diagnose the problem.</p>
-<p>We treat our services as &quot;black boxes&quot; during component testing, but demand that, once in production, the service provides some visibility of its internals. This seems inconsistent, until we begin to consider the behaviour of the service that enables this observability as just as much a part of its contract with the world around it as are the APIs that expose its domain-specific behaviour.</p>
-<p>In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service, to also verify, and therefore prevent regressions to, our service's observability behaviour.</p>
+            <p>In a microservice architecture, <a href="https://martinfowler.com/articles/microservice-testing/#testing-component-introduction">component testing</a> is a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat our services as &quot;black boxes&quot; that we can not see inside. We invoke the service's logic only through its public interface and verify its behaviour by observing its subsequent interactions with the world around it.</p>
+<p>When we run these services in production, however, we require some degree of observability from them. We must be able to quickly detect when our services' SLIs drop below the SLOs we have set, and then have enough telemetry data to be able to quickly hone in on a root cause.</p>
+<p>This might seem inconsistent; we treat our services as &quot;black boxes&quot; during component testing, but demand observability from them in production.</p>
+<p>In reality, the observability of the service forms part of its contract with the world around it, in the same way as do its domain-specific APIs.</p>
+<p>In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service to also verify, and therefore prevent regressions in, our service's observability.</p>
 
             <a class="has-text-danger-dark has-text-weight-semibold" href='https:&#x2F;&#x2F;alexchilcott.github.io&#x2F;posts&#x2F;when-is-a-black-box-test-not-a-black-box-test&#x2F;'>
               Read More

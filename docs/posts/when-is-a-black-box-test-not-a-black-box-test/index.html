@@ -22,7 +22,7 @@
 
   <title>
     
- | When Is A &quot;Black Box&quot; Test, Not A &quot;Black Box&quot; Test?
+ | When Is A &quot;Black Box&quot; Test Not A &quot;Black Box&quot; Test?
 
   </title>
 
@@ -79,7 +79,7 @@
       <div class="column is-8 is-offset-2">
         <article class="box">
           <h1 class="title">
-            When Is A &quot;Black Box&quot; Test, Not A &quot;Black Box&quot; Test?
+            When Is A &quot;Black Box&quot; Test Not A &quot;Black Box&quot; Test?
           </h1>
           <p class="subtitle"></p>
           <div class="columns is-multiline is-gapless">
@@ -103,11 +103,11 @@
   <span class="icon">
     <i class="far fa-clock"></i>
   </span>
-  <span>14 min,</span>
+  <span>13 min,</span>
   <span class="icon">
     <i class="fas fa-pencil-alt"></i>
   </span>
-  <span>2753 words</span>
+  <span>2559 words</span>
 </span>
 
             </div>
@@ -119,38 +119,56 @@
             </div>
           </div>
           <div class="content mt-2">
-            <p>In a microservice architecture, <a href="https://martinfowler.com/articles/microservice-testing/#testing-component-introduction">component testing</a>, where the behaviour of a service is verified using only what is invokable and observable through its public interface, has become a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat the service as a &quot;black box&quot; that we can not see inside, and focus purely on the service's contract with the world around it.</p>
-<p>When these services are deployed to production, however, we require some degree of observability from them. The failure modes of complex distributed systems are rarely predictable, so it is crucial that, when our system's SLIs drop below the SLOs we have set for it, our services that comprise that system are exporting the telemetry data that engineers need to be able to detect and diagnose the problem.</p>
-<p>We treat our services as &quot;black boxes&quot; during component testing, but demand that, once in production, the service provides some visibility of its internals. This seems inconsistent, until we begin to consider the behaviour of the service that enables this observability as just as much a part of its contract with the world around it as are the APIs that expose its domain-specific behaviour.</p>
-<p>In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service, to also verify, and therefore prevent regressions to, our service's observability behaviour.</p>
+            <p>In a microservice architecture, <a href="https://martinfowler.com/articles/microservice-testing/#testing-component-introduction">component testing</a> is a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat our services as &quot;black boxes&quot; that we can not see inside. We invoke the service's logic only through its public interface and verify its behaviour by observing its subsequent interactions with the world around it.</p>
+<p>When we run these services in production, however, we require some degree of observability from them. We must be able to quickly detect when our services' SLIs drop below the SLOs we have set, and then have enough telemetry data to be able to quickly hone in on a root cause.</p>
+<p>This might seem inconsistent; we treat our services as &quot;black boxes&quot; during component testing, but demand observability from them in production.</p>
+<p>In reality, the observability of the service forms part of its contract with the world around it, in the same way as do its domain-specific APIs.</p>
+<p>In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service to also verify, and therefore prevent regressions in, our service's observability.</p>
 <span id="continue-reading"></span>
 <hr />
 <p><em>All code in this post is written in <a href="https://www.rust-lang.org/">Rust</a>, and viewable in <a href="https://github.com/alexchilcott/blog-post-observable-component-tests">GitHub</a>. The approaches that are explored are applicable to any language.</em></p>
 <p><em>This post assumes a working knowledge of <a href="https://prometheus.io/docs/introduction/overview/">Prometheus</a> and <a href="https://www.jaegertracing.io/docs/1.28/">Jaeger</a>/<a href="https://opentelemetry.io/docs/concepts/what-is-opentelemetry/">OpenTelemetry</a>.</em></p>
 <hr />
 <h2 id="our-cat-service">Our Cat Service</h2>
-<p>Let's define a microservice, which has an important job to do. It hosts a <code>/cat</code> route (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/src/server/get_cat_route.rs#L34">source</a>), which returns a random cat fact and image url. It gets these by making HTTP requests out to a couple of third party APIs; the example code uses <a href="https://catfact.ninja/fact">catfact.ninja</a> and <a href="https://api.thecatapi.com/v1/images/search">thecatapi.com</a> respectively.</p>
+<p>Let's define a service, which has an important job to do. It will:</p>
+<ul>
+<li>host a <code>GET /cat</code> route (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/src/server/get_cat_route.rs#L34">source</a>), which:
+<ul>
+<li>retrieves a cat-related fact from <a href="https://catfact.ninja/fact">catfact.ninja</a>;</li>
+<li>retrieves a URL of a picture of a cat from <a href="https://api.thecatapi.com/v1/images/search">thecatapi.com</a>; and</li>
+<li>returns both to the caller in the form <code>{ &quot;fact&quot;: &quot;&lt;some fact about cats&gt;&quot;, &quot;image_url&quot;: &quot;&lt;url of a cat photo&gt;&quot; }</code>.</li>
+</ul>
+</li>
+</ul>
 <figure>
     <img src="./cat-service-sequence-diagram.svg" alt="Cat Service Sequence Diagram">
-    <figcaption>Our Cat service and its interactions with third party APIs</figcaption>
+    <figcaption>Our Cat service and its interactions with third-party APIs</figcaption>
 </figure>
-<p>Running our service manually, we can verify that it appears to work. However, without any tests for this service, we are relying on extensive manual testing each time we make a change to verify the existing behaviour has not changed, and any new behaviour is as we expect it to be. This sounds laborious and error prone, to me.</p>
+<p>Running our service manually, we can verify that it appears to work.</p>
+<p>However, with no tests in place, we are relying on extensive manual testing each time we make a change to verify its behaviour. This is laborious and error-prone.</p>
 <h2 id="our-first-component-test">Our First Component Test</h2>
-<p>To component test this service, we would aim to run the service as closely to how it runs in production as possible. Instead of mocking any logic internal to the service's boundary, we build a test environment inside our tests which mocks out any of the service's points of contact with the outside world. We would then verify the behaviour of the service by interacting with it as a genuine client of the service would; through its public HTTP API.</p>
-<p>Each test for this service will start 3 HTTP servers - one for the Cat service itself, and one for each third party API our service depends on that we need to mock. The Cat service will be configured with URLs that point to the third party mocks in place of the URLs that would be used in production for the genuine APIs.</p>
+<p>To component test this service, we need to run the service as closely to how it runs in production as possible. Instead of mocking any logic internal to the service in our tests, we will:</p>
+<ul>
+<li>start mocks of any external API our service interacts with;</li>
+<li>configure those mocks with their initial state;</li>
+<li>interact with the service's public API, as a true user of the service would; and</li>
+<li>verify the outcome of that interaction.</li>
+</ul>
+<p>Each test for this service will start three HTTP servers - one for the service itself, and one for each of our mocked third-party APIs. The service will be configured with URLs that point to the mocks in place of the URLs that would be used in production for the live APIs.</p>
 <figure>
     <img src="./cat-service-component-test-sequence-diagram.svg" alt="Cat Service Component TestSequence Diagram">
     <figcaption>A basic component test, exercising our Cat service</figcaption>
 </figure>
-<p>A basic component test (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L19">source</a>) for this service might start with an <code>Arrange</code> phase, which starts some form of test harness, containing our service and any mocks of dependencies it requires, then configures the mock APIs to return <code>200</code> responses and captures the image and fact that our mocks will return.:</p>
+<p>A basic component test (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L19">source</a>) for this service starts with an <code>Arrange</code> phase, which:</p>
+<ul>
+<li>starts the mocks of the service's dependencies (encapsulated in a <code>TestHarness</code>, for ease of reuse); and</li>
+<li>configures the mock to return <code>200</code> responses while capturing the image URL and fact that the mocks will return.</li>
+</ul>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#b48ead;">let</span><span> test_harness = TestHarness::start().await;
-</span><span style="color:#b48ead;">let</span><span> cat_image_url = test_harness
-</span><span>    .mock_cat_images_api
-</span><span>    .</span><span style="color:#96b5b4;">configure_cat_image_url</span><span>()
-</span><span>    .await;
+</span><span style="color:#b48ead;">let</span><span> cat_image_url = test_harness.mock_cat_images_api.</span><span style="color:#96b5b4;">configure_cat_image_url</span><span>().await;
 </span><span style="color:#b48ead;">let</span><span> cat_fact = test_harness.mock_cat_facts_api.</span><span style="color:#96b5b4;">configure_cat_fact</span><span>().await;
 </span></code></pre>
-<p>During the <code>Act</code> phase, it can then make an HTTP request to our service:</p>
+<p>During the <code>Act</code> phase, we make an HTTP request to the service's <code>/cat</code> endpoint:</p>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#b48ead;">let</span><span> response_body = test_harness
 </span><span>    .client
 </span><span>    .</span><span style="color:#96b5b4;">get</span><span>(test_harness.</span><span style="color:#96b5b4;">build_url</span><span>(&quot;</span><span style="color:#a3be8c;">/cat</span><span>&quot;))
@@ -161,24 +179,33 @@
 </span><span>    .await
 </span><span>    .</span><span style="color:#96b5b4;">expect</span><span>(&quot;</span><span style="color:#a3be8c;">Failed to deserialize body</span><span>&quot;);
 </span></code></pre>
-<p>And finally during our <code>Assert</code> phase, it can check the response from the server contains the data our mocks were configured to return.</p>
+<p>And finally, during the <code>Assert</code> phase, we check that the response from the service contains the fact and image URL our mocks were configured to return.</p>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span>assert_eq!(response_body.fact, cat_fact);
 </span><span>assert_eq!(response_body.image_url, cat_image_url);
 </span></code></pre>
-<p>So far, so good. We could write various permutations of this test, simulating different error conditions (third party APIs returning <code>500</code>s or malformed responses, timeouts, etc.) and call it a day.</p>
+<p>So far, so good. We could write various permutations of this test, simulating different error conditions (third-party APIs returning <code>500</code>s or malformed responses, timeouts, etc.) and call it a day.</p>
 <p>We are not done yet, though.</p>
 <h2 id="metrics">Metrics</h2>
 <p>In our company where we run this service, we use Prometheus to monitor our services, and trigger alerts based on the metrics the service exposes.</p>
-<p>Let's say that we want to be able to trigger an alert when the proportion of <code>GET /cat</code> requests to our service that result in a <code>500</code> response breaches a certain threshold. What do we require on our service's public contract to implement this requirement?</p>
-<p>Once Prometheus discovers a target (in this case, our service), it will, by default, periodically scrape metrics from the service's <code>GET /metrics</code> endpoint. The response has to contain metrics about the service in a <a href="https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md">format Prometheus recognises</a>. We would like our service to export a metric called <code>http_requests_total</code>, and it should have <code>endpoint</code>, <code>method</code> and <code>status_code</code> labels.</p>
-<p>Now we have clarified these requirements, we should write tests for them, to give us some confidence that they are met (and that we do not accidentally change this behaviour in the future), lest we find ourselves in an uncomfortable conversation where a client informs us of degradation to our service before we have noticed ourselves, because we depend on our metrics to trigger alerts, but we inadvertently stopped exporting them correctly.</p>
-<p>We might define some component test scenarios to protect this behaviour as so:</p>
+<p>Once Prometheus discovers a target (in this case, our service), it will, by default, periodically scrape metrics from the service's <code>GET /metrics</code> endpoint. The response has to contain metrics about the service in a <a href="https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md">format Prometheus understands</a>.</p>
+<p>We want to be able to trigger an alert when the proportion of <code>GET /cat</code> requests to our service that result in a <code>500</code> response breaches a certain threshold. What do we require on our service's public contract to implement this requirement?</p>
+<ul>
+<li>Our service should host a <code>GET /metrics</code> endpoint.</li>
+<li>The response from that endpoint should:
+<ul>
+<li>contain a set of samples in the Prometheus format; and</li>
+<li>include a metric called <code>http_requests_total</code>, which counts the number of requests made to the service, and has <code>endpoint</code>, <code>method</code> and <code>status_code</code> labels</li>
+</ul>
+</li>
+</ul>
+<p>Now we have clarified these requirements, we write tests for them, to give us some confidence that they are met. Without doing so, we risk accidentally changing this behaviour in the future and finding ourselves in an uncomfortable conversation where a client is informing us of degradation to our service before we knew about it ourselves.</p>
+<p>We define some component test scenarios to protect this behaviour as so:</p>
 <blockquote>
-<p>Given my server has received a <code>GET /cat</code> request which was handled successfully, when it then receives a <code>GET /metrics</code> request, it should respond with a Prometheus-compatible response that contains an <code>&quot;http_requests_total&quot;</code> metric, with <code>&quot;endpoint&quot;</code>=<code>&quot;/cat&quot;</code>, <code>&quot;method&quot;</code>=<code>&quot;GET&quot;</code>, and <code>&quot;status_code&quot;</code>=<code>&quot;200&quot;</code>, whose value is <code>1</code>.</p>
+<p>Given my service has received a <code>GET /cat</code> request which was handled successfully, when it then receives a <code>GET /metrics</code> request, it should respond with a Prometheus-compatible response that contains an <code>&quot;http_requests_total&quot;</code> metric, with <code>&quot;endpoint&quot;</code>=<code>&quot;/cat&quot;</code>, <code>&quot;method&quot;</code>=<code>&quot;GET&quot;</code>, and <code>&quot;status_code&quot;</code>=<code>&quot;200&quot;</code>, whose value is <code>1</code>.</p>
 </blockquote>
 <p>and</p>
 <blockquote>
-<p>Given my server has received a <code>GET /cat</code> request which it was unable to handle, when it then receives a <code>GET /metrics</code> request, it should respond with a Prometheus-compatible response that contains an <code>&quot;http_requests_total&quot;</code> metric, with <code>&quot;endpoint&quot;</code>=<code>&quot;/cat&quot;</code>, <code>&quot;method&quot;</code>=<code>&quot;GET&quot;</code>, and <code>&quot;status_code&quot;</code>=<code>&quot;500&quot;</code>, whose value is <code>1</code>.</p>
+<p>Given my service has received a <code>GET /cat</code> request which it was unable to handle, when it then receives a <code>GET /metrics</code> request, it should respond with a Prometheus-compatible response that contains an <code>&quot;http_requests_total&quot;</code> metric, with <code>&quot;endpoint&quot;</code>=<code>&quot;/cat&quot;</code>, <code>&quot;method&quot;</code>=<code>&quot;GET&quot;</code>, and <code>&quot;status_code&quot;</code>=<code>&quot;500&quot;</code>, whose value is <code>1</code>.</p>
 </blockquote>
 <p>Let's take a look at the second test (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L102">source</a>). Here's what it will do:</p>
 <figure>
@@ -199,7 +226,7 @@
 </span><span>    .</span><span style="color:#96b5b4;">status</span><span>();
 </span><span>assert_eq!(status_code, StatusCode::</span><span style="color:#d08770;">INTERNAL_SERVER_ERROR</span><span>);
 </span></code></pre>
-<p>In our <code>Act</code> phase, we make a request to our service's <code>/metrics</code> endpoint, just as Prometheus would:</p>
+<p>In our <code>Act</code> phase, we make an HTTP request to our service's <code>/metrics</code> endpoint, just as Prometheus would:</p>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#b48ead;">let</span><span> response = test_harness
 </span><span>    .client
 </span><span>    .</span><span style="color:#96b5b4;">get</span><span>(test_harness.</span><span style="color:#96b5b4;">build_url</span><span>(&quot;</span><span style="color:#a3be8c;">/metrics</span><span>&quot;))
@@ -232,35 +259,43 @@
 </span><span>
 </span><span>assert_eq!(sample.value, Value::Counter(</span><span style="color:#d08770;">1.</span><span style="color:#96b5b4;">into</span><span>()));
 </span></code></pre>
-<p>Great! We have some confidence that our service will do <em>The Right Thing™</em> when it comes to the metrics it exports. Assuming the other pieces of the alerting puzzle are working (a big assumption, and the testing of which is outside the scope of this post), our brave oncallers will be awoken from their slumber when our service's error rate breaches the alerting threshold we set. Bleary-eyed, our oncaller heads to our tracing UI to begin to triage...</p>
+<p>Great! We have some confidence that our service will do <em>The Right Thing™</em> when it comes to the metrics it exports. Assuming the other pieces of the alerting puzzle are working (a big assumption, the testing of which is outside the scope of this post), our brave oncallers will be awoken from their slumber when our service's error rate breaches the alerting threshold we set. Bleary-eyed, our oncaller heads to our tracing UI to begin to triage...</p>
 <p><em>Oh. The service's traces aren't correct...</em></p>
 <h2 id="traces">Traces</h2>
 <p>Traces, like metrics, are often something that engineers get working in their service, check manually once the service is deployed to a test environment, and then call it a day. Unfortunately, also like metrics, if we inadvertently break this behaviour and do not have tests in place that catch this for us, we risk noticing only at the worst possible time; during an incident.</p>
-<p>For our service, let's imagine a relatively simple configuration for exporting traces. Our service will send traces, in the Jaeger format, to a Jaeger-compatible collector, such as the OpenTelemetry collector. From there it will be exported to whichever backends we use to visualize our traces.</p>
+<p>For our service, let's imagine a relatively simple configuration for exporting traces. Our service will send traces, in the Jaeger format, to a Jaeger-compatible collector, such as the OpenTelemetry collector. From there it will be exported to whichever backends we use to visualize our traces. Sampling of traces will be handled by the collector.</p>
 <figure>
     <img src="./cat-service-tracing.svg" alt="Tracing architecture">
     <figcaption>Exporting traces from our services to an OpenTelemetry collector</figcaption>
 </figure>
-<p>So what is our service's contract here? For any request it receives, it should eventually send a trace (consisting of a number of spans) for the request to our collector, using the <a href="https://www.jaegertracing.io/docs/1.28/apis/#thrift-over-http-stable">Jaeger API</a>. (We are assuming sampling of traces is performed outside the service, and so traces for all requests are sent.)</p>
-<p>We might also want to define some properties of the trace; perhaps there are company-wide standards that we want all services to adhere to. For example, for spans representing an HTTP request being handled by a server, they should be named <code>HTTP request</code> and contain <code>http.status_code</code>, <code>http.method</code>, and <code>http.route</code> tags.</p>
+<p>Crystallising this design into some concrete requirements, we will say for every HTTP request our service handles, it should:</p>
+<ul>
+<li>Eventually send a trace to the collector, using the <a href="https://www.jaegertracing.io/docs/1.28/apis/#thrift-over-http-stable">Jaeger API</a>.</li>
+<li>The trace should be named <code>HTTP request</code>.</li>
+<li>The trace should contain <code>http.status_code</code>, <code>http.method</code>, and <code>http.route</code> tags.</li>
+</ul>
 <p>With a bit of work to build a mock collector that can receive our spans and store them in memory for later querying, we can begin to verify this behaviour of our service rather nicely through our tests.</p>
 <p>We will define a component test to verify our traces as so:</p>
 <blockquote>
-<p>Given my server has received a <code>GET /cat</code> request which was handled successfully, then eventually, the collector should receive a trace for this request. This trace should contain a span whose operation name is <code>HTTP request</code>, and should have a tag called <code>http.status_code</code> whose value is <code>200</code>.</p>
+<p>Given my service has received a <code>GET /cat</code> request which was handled successfully, then eventually, the collector should receive a trace for this request. This trace should contain a span whose operation name is <code>HTTP request</code>, and should have a tags for <code>http.status_code</code>, <code>http.method</code> and <code>http.route</code> whose values are <code>200</code>, <code>GET</code>, and <code>/cat</code> respectively.</p>
 </blockquote>
 <p><em>&quot;Eventually&quot;? What's that about?</em></p>
-<p>We are testing asynchronous behaviour. In production, traces are typically batched by the service and sent asynchronously to the collector. This is by design, to prevent delays or failures in pushing traces resulting in the degradation of our service, and to reduce the chattiness of our service when sending traces over the network. However, this introduces uncertainty into our tests. To overcome this, we might choose to run our service in a &quot;test mode&quot; to make this behaviour synchronous for our tests, but this increases the room for bugs that only manifest themselves in &quot;non-test-mode&quot; to slip into our service.</p>
+<p>We are testing asynchronous behaviour. In production, traces are typically batched by the service and sent asynchronously to the collector. This is by design, to prevent delays or failures in pushing traces resulting in the degradation of our service, and to reduce the chattiness of our service when sending traces over the network. However, this introduces uncertainty into our tests.</p>
+<p>To overcome this, we might choose to run our service in a &quot;test mode&quot; to make this behaviour synchronous for our tests, but this increases the room for bugs that only manifest themselves in &quot;non-test-mode&quot; to slip into our service.</p>
 <p>Depending on the language and ecosystem you are using to build your service, and the extent to which your test logic is able to trigger behaviour inside your service, there may be nice ways to minimise this delay. For example, the OpenTelemetry SDK specification describes a <a href="https://github.com/open-telemetry/opentelemetry-specification/blob/3e380e249f60c3a5f68746f5e84d10195ba41a79/specification/trace/sdk.md#forceflush">ForceFlush</a> method. While triggering this from tests would cross the boundary between the service logic and the test logic, rather than strictly testing the service only through its public API, it is worth considering to keep your tests running quickly and reliably.</p>
-<p>However, even if we do trigger a forced flush of any pending spans, there may still be a small delay before we can query these from our mock collector. Flushing the spans is not necessarily a synchronous operation. So, we pick a timeout for our tests to allow for traces in our mock to match our expectations. The longer the timeout, the longer it may take genuinely broken tests to fail, but the lower the risk of false negatives, where the service behaviour is correct but our timeout was <em>just too short</em>. It usually makes sense to optimise for non flaky tests, and choose a generous timeout.</p>
+<p>However, even if we do manually flush any pending spans, there may still be a small delay before we can query these from our mock collector. Flushing the spans is not necessarily synchronous.</p>
+<p>So, we pick a timeout to allow for the traces our mock collector has received to eventually match the expectations in our tests. The longer the timeout, the longer it may take broken tests to fail, but the lower the risk of false negatives, where the service behaviour is correct but our timeout was <em>just too short</em>. It usually makes sense to optimise for non-flaky tests, and choose a generous timeout.</p>
 <p>As in our first test, we set up our HTTP request to succeed inside the <code>Arrange</code> phase (<a href="https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L211">source</a>):</p>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#b48ead;">let</span><span> test_harness = TestHarness::start().await;
-</span><span>test_harness
-</span><span>    .mock_cat_images_api
-</span><span>    .</span><span style="color:#96b5b4;">configure_cat_image_url</span><span>()
-</span><span>    .await;
+</span><span>test_harness.mock_cat_images_api.</span><span style="color:#96b5b4;">configure_cat_image_url</span><span>().await;
 </span><span>test_harness.mock_cat_facts_api.</span><span style="color:#96b5b4;">configure_cat_fact</span><span>().await;
 </span></code></pre>
-<p>During <code>Act</code>, we open a span, then make the HTTP request to <code>GET /cat</code>, propagating our current tracing context in the HTTP request we send to the server. We capture the trace's ID from the span we created, to query later from our mock collector:</p>
+<p>During <code>Act</code>, we:</p>
+<ul>
+<li>open a span;</li>
+<li>make an HTTP request to <code>GET /cat</code>, propagating our current tracing context inside the request; and</li>
+<li>capture the trace ID from the span we created.</li>
+</ul>
 <pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#b48ead;">let</span><span> trace_id = {
 </span><span>    </span><span style="color:#b48ead;">let</span><span> test_span =
 </span><span>        info_span!(&quot;</span><span style="color:#a3be8c;">cat_endpoint_sends_a_trace_that_shows_the_incoming_http_request</span><span>&quot;);
@@ -277,14 +312,21 @@
 </span><span>    test_span.</span><span style="color:#96b5b4;">otel_trace_id</span><span>()
 </span><span>};
 </span></code></pre>
-<p>Finally, in our <code>Assert</code> phase, we query our collector to retrieve the trace, and check the trace against our expectations. Since it is asynchronous, we retry for a period of time (in this case, up to 10 seconds) until it succeeds:</p>
-<pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#96b5b4;">wait_for_trace</span><span>(
-</span><span>    test_harness.global_jaeger_collector_server,
+<p>Finally, in our <code>Assert</code> phase, we:</p>
+<ul>
+<li>query our collector to retrieve the trace;</li>
+<li>check the trace has a span with the correct name; and</li>
+<li>check the span has the correct tags.</li>
+</ul>
+<p>Since the behaviour is asynchronous, we retry until it either succeeds or a timeout elapses:</p>
+<pre data-lang="rust" style="background-color:#2b303b;color:#c0c5ce;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#96b5b4;">wait_10_seconds_for_trace</span><span>(
+</span><span>    test_harness.jaeger_collector_server,
 </span><span>    trace_id.</span><span style="color:#96b5b4;">clone</span><span>(),
 </span><span>    |</span><span style="color:#bf616a;">trace</span><span>| { </span><span style="color:#65737e;">// This block is a function that will run every time we want to make
 </span><span>              </span><span style="color:#65737e;">// assertions against the current state of the trace. The
-</span><span>              </span><span style="color:#65737e;">// wait_for_trace function polls our in-memory collection of traces
-</span><span>              </span><span style="color:#65737e;">// and terminates once the trace passes all the expectations below.
+</span><span>              </span><span style="color:#65737e;">// wait_10_seconds_for_trace function polls our mock collector&#39;s
+</span><span>              </span><span style="color:#65737e;">// in-memory collection of traces and terminates once a trace exists
+</span><span>              </span><span style="color:#65737e;">// that passes all the expectations below.
 </span><span>        </span><span style="color:#b48ead;">let</span><span> span_node = trace
 </span><span>            .</span><span style="color:#96b5b4;">descendants</span><span>()
 </span><span>            .</span><span style="color:#96b5b4;">find</span><span>(|</span><span style="color:#bf616a;">s</span><span>| s.</span><span style="color:#96b5b4;">borrow</span><span>().operation_name == &quot;</span><span style="color:#a3be8c;">HTTP request</span><span>&quot;)
@@ -307,12 +349,17 @@
 </span><span>
 </span><span>test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.01s
 </span></code></pre>
-<p>Success! From this starting point, we can build up much richer tests that check many details about any traces we publish, and therefore, the information that will be available during incidents for debugging. Are all the spans we expect to be able to see in our tooling being exported properly? Do they have the correct domain-specific tags that we might want to enrich them with? When our HTTP requests to our third party APIs fail, are details of the failures available as tags on the span?</p>
-<p>Tests such as these will give us much more confidence that our traces will look as we expect them to look, when we need to rely on them.</p>
+<p>Success! From this starting point, we can build up much richer tests that check many details about any traces we publish, and therefore, the information that will be available during incidents for debugging. For example:</p>
+<ul>
+<li>Do our spans have the correct domain-specific tags that we want to enrich them with, such as <code>user_id</code>?</li>
+<li>Do we add correlation IDs for our third-party API calls to their spans?</li>
+<li>Do we capture useful details of errors on spans for calls that failed?</li>
+</ul>
+<p>Tests such as these will give us much more confidence that our traces will look as we expect them to, when we need to rely on them.</p>
 <h2 id="wrapping-up">Wrapping Up</h2>
 <p>So, where do we stand now?</p>
-<p>Our cat service has component tests which validate its domain-specific behaviour. On top of that, we can also validate, and prevent regressions to, the metrics it exposes and the traces it sends to our collector. When our requirements change for the metrics and/or traces (perhaps we want to begin to expose some new data on spans for outgoing HTTP requests), we can even implement those requirements in a test driven manner.</p>
-<p>Of course, there is still much that could go awry. Misconfigured network policies may block traffic between our service and our observability tooling. Our PromQL expressions for our alerts or dashboard panels might not be correct. Our PagerDuty configuration might not be as we expected it to be. We can't rely entirely on tests such as these to prove our alerts will fire or our dashboards will be correct, but they can be useful to mitigate the risk of regressions to essential functionality, that is often neglected in our automated tests.</p>
+<p>There is still much that could go awry. Misconfigured network policies may block traffic between our service and our observability tooling. Our PromQL expressions for our alerts or dashboard panels might not be correct. Our PagerDuty configuration might not be as we expected it to be.</p>
+<p>However, by considering our service's observability requirements in terms of its specific interactions with the world around it, we have been able to exercise that behaviour through component testing. We have bought ourselves some confidence in our service's observability today, and some protection against regressions tomorrow.</p>
 
           </div>
         </article>

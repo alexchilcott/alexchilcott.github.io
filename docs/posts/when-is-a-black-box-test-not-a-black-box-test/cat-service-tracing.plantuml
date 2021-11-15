@@ -13,9 +13,8 @@ Client -> Server++: ""GET /cat""
 return ""{""\n""  "fact": "Cats are lazy.",""\n""  "image_url": "http://catpics.com/8e1bf1f9..."""\n""}""
 == At some point later ==
 note over Server
-    Periodically, or when enough requests have been
-    handled, a batch of spans will be sent to our
-    Collector.
+    Periodically, a batch of spans will
+    be sent to our Collector.
 end note 
 Server -> Collector: ""POST /api/traces""
 return ""OK""
