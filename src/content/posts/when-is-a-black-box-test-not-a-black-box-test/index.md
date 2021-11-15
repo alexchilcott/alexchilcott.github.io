@@ -6,13 +6,13 @@ date=2021-11-13
 toc = true
 +++
 
-In a microservice architecture, [component testing](https://martinfowler.com/articles/microservice-testing/#testing-component-introduction), where the behaviour of a service is verified using only what is invokable and observable through its public interface, has become a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat the service as a "black box" that we can not see inside, and focus purely on the service's contract with the world around it.
+In a microservice architecture, [component testing](https://martinfowler.com/articles/microservice-testing/#testing-component-introduction) is a crucial aspect of any comprehensive testing strategy. These tests encourage engineers to treat our services as "black boxes" that we can not see inside. We invoke the service's logic only through its public interface, and verify its behaviour by observing its subsequent interactions with the world around it.
 
-When these services are deployed to production, however, we require some degree of observability from them. The failure modes of complex distributed systems are rarely predictable, so it is crucial that, when our system's SLIs drop below the SLOs we have set for it, our services that comprise that system are exporting the telemetry data that engineers need to be able to detect and diagnose the problem.
+When we run these services in production, however, we require some degree of observability from them. The failure modes of complex distributed systems are rarely predictable, so it is crucial that, when our system's SLIs drop below the SLOs we have set for it, our services are exporting the telemetry data that we need to be able to detect and diagnose the problem.
 
-We treat our services as "black boxes" during component testing, but demand that, once in production, the service provides some visibility of its internals. This seems inconsistent, until we begin to consider the behaviour of the service that enables this observability as just as much a part of its contract with the world around it as are the APIs that expose its domain-specific behaviour.
+This might seem inconsistent; we treat our services as "black boxes" during component testing, but demand observability from them in production. To resolve this conflict, we must treat the observability of the service as just as much a part of its contract with the world around it as its domain-specific APIs.
 
-In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service, to also verify, and therefore prevent regressions to, our service's observability behaviour.
+In this post, I'll show a couple of ways we can expand on component tests that exercise domain-specific behaviour of a service to also verify, and therefore prevent regressions to, our service's observability.
 
 <!-- more -->
 
@@ -26,38 +26,47 @@ _This post assumes a working knowledge of [Prometheus](https://prometheus.io/doc
 
 ## Our Cat Service
 
-Let's define a microservice, which has an important job to do. It hosts a `/cat` route ([source](https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/src/server/get_cat_route.rs#L34)), which returns a random cat fact and image url. It gets these by making HTTP requests out to a couple of third party APIs; the example code uses [catfact.ninja](https://catfact.ninja/fact) and [thecatapi.com](https://api.thecatapi.com/v1/images/search) respectively.
+Let's define a service, which has an important job to do:
+
+- Host a `/cat` route ([source](https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/src/server/get_cat_route.rs#L34)), which returns a body of the form `{ "fact": "<some fact about cats>", "image_url": "<url of a cat photo>" }`.
+- Facts are retrieved from [catfact.ninja](https://catfact.ninja/fact).
+- Images are retrieved from [thecatapi.com](https://api.thecatapi.com/v1/images/search).
 
 <figure>
     <img src="./cat-service-sequence-diagram.svg" alt="Cat Service Sequence Diagram">
     <figcaption>Our Cat service and its interactions with third party APIs</figcaption>
 </figure>
 
-Running our service manually, we can verify that it appears to work. However, without any tests for this service, we are relying on extensive manual testing each time we make a change to verify the existing behaviour has not changed, and any new behaviour is as we expect it to be. This sounds laborious and error prone, to me.
+Running our service manually, we can verify that it appears to work. However, without any tests for this service, we are relying on extensive manual testing each time we make a change to verify the existing behaviour has not changed, and any new behaviour is as we expect it to be. This is laborious and error prone. (?? citation)
 
 ## Our First Component Test
 
-To component test this service, we would aim to run the service as closely to how it runs in production as possible. Instead of mocking any logic internal to the service's boundary, we build a test environment inside our tests which mocks out any of the service's points of contact with the outside world. We would then verify the behaviour of the service by interacting with it as a genuine client of the service would; through its public HTTP API.
+To component test this service, we need to run the service as closely to how it runs in production as possible. Instead of mocking any logic internal to the service's boundary, we:
 
-Each test for this service will start 3 HTTP servers - one for the Cat service itself, and one for each third party API our service depends on that we need to mock. The Cat service will be configured with URLs that point to the third party mocks in place of the URLs that would be used in production for the genuine APIs.
+- start mocks of any other service our service interacts with;
+- configure those mocks with their initial state;
+- interact with the service's public API, as a true user of the service would; and,
+- verify the outcome of that interaction.
+
+Each test for this service will start 3 HTTP servers - one for the service itself, and one for each third party API our service depends on that we mock. The Cat service will be configured with URLs that point to the mocks in place of the URLs that would be used in production for the genuine APIs.
 
 <figure>
     <img src="./cat-service-component-test-sequence-diagram.svg" alt="Cat Service Component TestSequence Diagram">
     <figcaption>A basic component test, exercising our Cat service</figcaption>
 </figure>
 
-A basic component test ([source](https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L19)) for this service might start with an `Arrange` phase, which starts some form of test harness, containing our service and any mocks of dependencies it requires, then configures the mock APIs to return `200` responses and captures the image and fact that our mocks will return.:
+A basic component test ([source](https://github.com/alexchilcott/blog-post-observable-component-tests/blob/cc544fe8374153fe5af8973536c8cd48de007e8d/cat_server/tests/all/tests.rs#L19)) for this service starts with an `Arrange` phase, which:
+
+- starts the mocks of the service's dependencies (encapsulated in a `TestHarness`, for ease of reuse); and
+- configures the mock to return `200` responses while capturing the image and fact that the mocks will return.
 
 ```rust
 let test_harness = TestHarness::start().await;
-let cat_image_url = test_harness
-    .mock_cat_images_api
-    .configure_cat_image_url()
-    .await;
+let cat_image_url = test_harness.mock_cat_images_api.configure_cat_image_url().await;
 let cat_fact = test_harness.mock_cat_facts_api.configure_cat_fact().await;
 ```
 
-During the `Act` phase, it can then make an HTTP request to our service:
+During the `Act` phase, we make an HTTP request to the service's `/cat` endpoint:
 
 ```rust
 let response_body = test_harness
@@ -71,7 +80,7 @@ let response_body = test_harness
     .expect("Failed to deserialize body");
 ```
 
-And finally during our `Assert` phase, it can check the response from the server contains the data our mocks were configured to return.
+And finally, during the `Assert` phase, we check that the response from the server contains the data the mocks were configured to return.
 
 ```rust
 assert_eq!(response_body.fact, cat_fact);
@@ -86,13 +95,18 @@ We are not done yet, though.
 
 In our company where we run this service, we use Prometheus to monitor our services, and trigger alerts based on the metrics the service exposes.
 
-Let's say that we want to be able to trigger an alert when the proportion of `GET /cat` requests to our service that result in a `500` response breaches a certain threshold. What do we require on our service's public contract to implement this requirement?
+Once Prometheus discovers a target (in this case, our service), it will, by default, periodically scrape metrics from the service's `GET /metrics` endpoint. The response has to contain metrics about the service in a [format Prometheus understands](https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md).
 
-Once Prometheus discovers a target (in this case, our service), it will, by default, periodically scrape metrics from the service's `GET /metrics` endpoint. The response has to contain metrics about the service in a [format Prometheus recognises](https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md). We would like our service to export a metric called `http_requests_total`, and it should have `endpoint`, `method` and `status_code` labels.
+We want to be able to trigger an alert when the proportion of `GET /cat` requests to our service that result in a `500` response breaches a certain threshold. What do we require on our service's public contract to implement this requirement?
 
-Now we have clarified these requirements, we should write tests for them, to give us some confidence that they are met (and that we do not accidentally change this behaviour in the future), lest we find ourselves in an uncomfortable conversation where a client informs us of degradation to our service before we have noticed ourselves, because we depend on our metrics to trigger alerts, but we inadvertently stopped exporting them correctly.
+- Our service should host a `GET /metrics` endpoint.
+- The response from that endpoint should:
+  - contain a set of samples in the Prometheus format; and
+  - include a metric called `http_requests_total`, with `endpoint`, `method` and `status_code` labels.
 
-We might define some component test scenarios to protect this behaviour as so:
+Now we have clarified these requirements, we write tests for them, to give us some confidence that they are met. Without doing so, we risk accidentally changing this behaviour in the future, and finding ourselves in an uncomfortable conversation where a client is informing us of degradation to our service before we knew about it ourselves.
+
+We define some component test scenarios to protect this behaviour as so:
 
 > Given my server has received a `GET /cat` request which was handled successfully, when it then receives a `GET /metrics` request, it should respond with a Prometheus-compatible response that contains an `"http_requests_total"` metric, with `"endpoint"`=`"/cat"`, `"method"`=`"GET"`, and `"status_code"`=`"200"`, whose value is `1`.
 
@@ -124,7 +138,7 @@ let status_code = test_harness
 assert_eq!(status_code, StatusCode::INTERNAL_SERVER_ERROR);
 ```
 
-In our `Act` phase, we make a request to our service's `/metrics` endpoint, just as Prometheus would:
+In our `Act` phase, we make an HTTP request to our service's `/metrics` endpoint, just as Prometheus would:
 
 ```rust
 let response = test_harness
@@ -163,7 +177,7 @@ let sample = metrics
 assert_eq!(sample.value, Value::Counter(1.into()));
 ```
 
-Great! We have some confidence that our service will do _The Right Thing™_ when it comes to the metrics it exports. Assuming the other pieces of the alerting puzzle are working (a big assumption, and the testing of which is outside the scope of this post), our brave oncallers will be awoken from their slumber when our service's error rate breaches the alerting threshold we set. Bleary-eyed, our oncaller heads to our tracing UI to begin to triage...
+Great! We have some confidence that our service will do _The Right Thing™_ when it comes to the metrics it exports. Assuming the other pieces of the alerting puzzle are working (a big assumption, the testing of which is outside the scope of this post), our brave oncallers will be awoken from their slumber when our service's error rate breaches the alerting threshold we set. Bleary-eyed, our oncaller heads to our tracing UI to begin to triage...
 
 _Oh. The service's traces aren't correct..._
 
@@ -200,10 +214,7 @@ As in our first test, we set up our HTTP request to succeed inside the `Arrange`
 
 ```rust
 let test_harness = TestHarness::start().await;
-test_harness
-    .mock_cat_images_api
-    .configure_cat_image_url()
-    .await;
+test_harness.mock_cat_images_api.configure_cat_image_url().await;
 test_harness.mock_cat_facts_api.configure_cat_fact().await;
 ```
 
